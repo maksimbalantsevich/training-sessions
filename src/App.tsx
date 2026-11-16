@@ -1,122 +1,149 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
+import { useEffect, useState } from 'react'
+import type { SessionsClient } from './api/sessionsClient'
+import { CreateSessionForm } from './sessions/CreateSessionForm'
+import type { Session, SessionStatus } from './sessions/types'
 import './App.css'
 
-function App() {
-  const [count, setCount] = useState(0)
+type LoadState =
+  | { status: 'loading' }
+  | { status: 'error' }
+  | { status: 'ready'; sessions: Session[] }
+
+type Filter = 'all' | 'scheduled'
+
+const FILTERS: readonly { value: Filter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'scheduled', label: 'Scheduled' },
+]
+
+const STATUS_LABELS: Record<SessionStatus, string> = {
+  scheduled: 'Scheduled',
+  completed: 'Completed',
+  cancelled: 'Cancelled',
+}
+
+const dateTimeFormat = new Intl.DateTimeFormat(undefined, {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+})
+
+type AppProps = {
+  client: SessionsClient
+}
+
+function App({ client }: AppProps) {
+  const [loadState, setLoadState] = useState<LoadState>({ status: 'loading' })
+  const [loadAttempt, setLoadAttempt] = useState(0)
+  const [filter, setFilter] = useState<Filter>('all')
+  const [isFormOpen, setIsFormOpen] = useState(false)
+
+  useEffect(() => {
+    let ignore = false
+    client.listSessions().then(
+      (sessions) => {
+        if (!ignore) setLoadState({ status: 'ready', sessions })
+      },
+      () => {
+        if (!ignore) setLoadState({ status: 'error' })
+      },
+    )
+    return () => {
+      ignore = true
+    }
+  }, [client, loadAttempt])
+
+  function retry() {
+    setLoadState({ status: 'loading' })
+    setLoadAttempt((attempt) => attempt + 1)
+  }
+
+  function handleCreated(session: Session) {
+    setLoadState((current) =>
+      current.status === 'ready'
+        ? { status: 'ready', sessions: [...current.sessions, session] }
+        : current,
+    )
+    setIsFormOpen(false)
+  }
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+    <main className="workspace">
+      <h1>Training sessions</h1>
+      {renderContent()}
+    </main>
   )
+
+  function renderContent() {
+    if (loadState.status === 'loading') {
+      return (
+        <p className="state-message" role="status">
+          Loading sessions…
+        </p>
+      )
+    }
+
+    if (loadState.status === 'error') {
+      return (
+        <div className="state-message">
+          <p role="alert">Couldn't load sessions.</p>
+          <button type="button" onClick={retry}>
+            Retry
+          </button>
+        </div>
+      )
+    }
+
+    const visibleSessions =
+      filter === 'all'
+        ? loadState.sessions
+        : loadState.sessions.filter((session) => session.status === filter)
+
+    return (
+      <>
+        <div className="toolbar">
+          <div className="filter" role="group" aria-label="Filter by status">
+            {FILTERS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                aria-pressed={filter === option.value}
+                onClick={() => setFilter(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          {isFormOpen ? null : (
+            <button type="button" onClick={() => setIsFormOpen(true)}>
+              New session
+            </button>
+          )}
+        </div>
+
+        {isFormOpen ? (
+          <CreateSessionForm
+            client={client}
+            onCreated={handleCreated}
+            onCancel={() => setIsFormOpen(false)}
+          />
+        ) : null}
+
+        <ul className="session-list" aria-label="Sessions">
+          {visibleSessions.map((session) => (
+            <li key={session.id} className="session">
+              <span className="session-title">{session.title}</span>
+              <span className={`session-status session-status--${session.status}`}>
+                {STATUS_LABELS[session.status]}
+              </span>
+              <time className="session-time" dateTime={session.startsAt}>
+                {dateTimeFormat.format(new Date(session.startsAt))}
+              </time>
+            </li>
+          ))}
+        </ul>
+      </>
+    )
+  }
 }
 
 export default App
